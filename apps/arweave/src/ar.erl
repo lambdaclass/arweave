@@ -308,7 +308,12 @@ show_help() ->
 			{"block_throttle_by_solution_interval (number)",
 					io_lib:format("The number of milliseconds that have to pass before "
 							"we accept another block with the same solution hash. "
-							"Default: ~B.", [?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS])}
+							"Default: ~B.", [?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS])},
+			{"mining_peer",
+				"Peer to use for coordinated mining",
+				"Example: mining_peer 127.0.0.1:1984,"
+				"17,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI,"
+				"21,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI"}
 		]
 	),
 	erlang:halt().
@@ -519,6 +524,16 @@ parse_cli_args(["block_throttle_by_ip_interval", Num | Rest], C) ->
 parse_cli_args(["block_throttle_by_solution_interval", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			block_throttle_by_solution_interval = list_to_integer(Num) });
+parse_cli_args(["mining_peer", MiningPeerString | Rest], C) ->
+	#config{ mining_peer = MiningPeers } = C,
+	case ar_config:parse_mining_peer(MiningPeerString) of
+		{ok, MiningPeer} ->
+			MiningPeers2 = [MiningPeer | MiningPeers],
+			parse_cli_args(Rest, C#config{ mining_peer = MiningPeers2 });
+		{error, _} ->
+			io:format("Mining peer ~p is invalid.~n", [MiningPeerString]),
+			erlang:halt()
+	end;
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().

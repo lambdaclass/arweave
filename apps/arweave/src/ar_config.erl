@@ -1,6 +1,6 @@
 -module(ar_config).
 
--export([parse/1, parse_storage_module/1]).
+-export([parse/1, parse_storage_module/1, parse_mining_peer/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -31,6 +31,22 @@ parse_storage_module(IOList) ->
 			parse_storage_module(RangeNumber, RangeSize, PackingBin)
 	end.
 
+parse_mining_peer(IOList) ->
+	Bin = iolist_to_binary(IOList),
+	[Peer | StorageModulesBins] = binary:split(Bin, <<",">>, [global]),
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			case storage_module_pair_to_iolists(StorageModulesBins) of
+				{ok, StorageModules} ->
+					StorageModules2 = lists:map(fun parse_storage_module/1,
+												StorageModules),
+					{ok, {ValidPeer, StorageModules2}};
+				{error, Reason} ->
+					{error, Reason}
+			end;
+		{error, invalid} ->
+			{error, invalid_peer}
+	end.
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -583,3 +599,17 @@ parse_requests_per_minute_limit_by_ip({[]}, Parsed) ->
 	{ok, Parsed};
 parse_requests_per_minute_limit_by_ip(_, _) ->
 	error.
+
+storage_module_pair_to_iolists(StorageModulesBins) ->
+	storage_module_pair_to_iolists(StorageModulesBins, []).
+
+storage_module_pair_to_iolists([], StorageModules) ->
+	{ok, StorageModules};
+storage_module_pair_to_iolists(StorageModulesBins, Modules) ->
+	case StorageModulesBins of
+		[Partition, Packing | Rest] ->
+			Modules2 = [[Partition, ",", Packing] | Modules],
+			storage_module_pair_to_iolists(Rest, Modules2);
+		_ ->
+			{error, peer_storage_modules_not_pair}
+	end.
