@@ -496,6 +496,18 @@ parse_options([{<<"block_throttle_by_solution_interval">>, D} | Rest], Config)
 		when is_integer(D) ->
 	parse_options(Rest, Config#config{ block_throttle_by_solution_interval = D });
 
+parse_options([{<<"mining_peers">>, MiningPeers} | Rest], Config) when is_list(MiningPeers) ->
+	#config{ mining_peers = CurrentMiningPeers } = Config,
+	case parse_mining_peer_list(MiningPeers, CurrentMiningPeers) of
+		{ok, ParsedMiningPeers} ->
+			Peers2 = CurrentMiningPeers ++ ParsedMiningPeers,
+			parse_options(Rest, Config#config{ mining_peers = Peers2 });
+		error ->
+			{error, bad_mining_peers, MiningPeers}
+	end;
+parse_options([{<<"mining_peers">>, Peers} | _], _) ->
+	{error, {bad_type, mining_peers, array}, Peers};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
@@ -613,3 +625,11 @@ storage_module_pair_to_iolists(StorageModulesBins, Modules) ->
 		_ ->
 			{error, peer_storage_modules_not_pair}
 	end.
+
+parse_mining_peer_list([MiningPeer | Rest], MiningPeers) ->
+	case parse_mining_peer(MiningPeer) of
+		{ok, Peer} -> parse_mining_peer_list(Rest, [Peer | MiningPeers]);
+		{error, _} -> error
+	end;
+parse_mining_peer_list([], MiningPeers) ->
+	{ok, lists:reverse(MiningPeers)}.

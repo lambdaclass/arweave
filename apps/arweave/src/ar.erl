@@ -525,11 +525,11 @@ parse_cli_args(["block_throttle_by_solution_interval", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			block_throttle_by_solution_interval = list_to_integer(Num) });
 parse_cli_args(["mining_peer", MiningPeerString | Rest], C) ->
-	#config{ mining_peer = MiningPeers } = C,
+	#config{ mining_peers = MiningPeers } = C,
 	case ar_config:parse_mining_peer(MiningPeerString) of
 		{ok, MiningPeer} ->
 			MiningPeers2 = [MiningPeer | MiningPeers],
-			parse_cli_args(Rest, C#config{ mining_peer = MiningPeers2 });
+			parse_cli_args(Rest, C#config{ mining_peers = MiningPeers2 });
 		{error, _} ->
 			io:format("Mining peer ~p is invalid.~n", [MiningPeerString]),
 			erlang:halt()
