@@ -73,7 +73,7 @@ add_mining_peer({Peer, StorageModules}, State) ->
                 %% Allowing the case of same partition handled by different peers
                 case maps:get(PartitionId, Acc, none) of
                     L when is_list(L) ->
-                        maps:put(PartitionId, [{Peer, PartitionSize, Packing}|L], Acc);
+                        maps:put(PartitionId, [{Peer, PartitionSize, Packing} | L], Acc);
                     none ->
 				        maps:put(PartitionId, [{Peer, PartitionSize, Packing}], Acc)
                 end
