@@ -19,7 +19,8 @@
 		encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
 		price_history_to_binary/1, binary_to_price_history/1,
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
-		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1]).
+		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
+		json_map_to_h2_materials/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -1419,6 +1420,15 @@ binary_to_signature_type(List) ->
 		%% For backwards-compatibility.
 		_ -> {?RSA_SIGN_ALG, 65537}
 	end.
+
+json_map_to_h2_materials(JSON) ->
+	lists:map(fun (JsonElement) ->
+		#{
+			h0 => ar_util:decode(maps:get(<<"h0">>, JsonElement)),
+			h1 => ar_util:decode(maps:get(<<"h1">>, JsonElement)),
+			recall_bytes_2 => ar_util:decode(maps:get(<<"recall_bytes_2">>, JsonElement))
+		}
+	end, JSON).
 
 %%% Tests: ar_serialize
 
