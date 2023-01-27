@@ -20,7 +20,7 @@
 		price_history_to_binary/1, binary_to_price_history/1,
 		nonce_limiter_update_to_binary/1, binary_to_nonce_limiter_update/1,
 		nonce_limiter_update_response_to_binary/1, binary_to_nonce_limiter_update_response/1,
-		json_map_to_h2_materials/1]).
+		json_map_to_h2_materials/1, json_map_to_solutions/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -1427,6 +1427,17 @@ json_map_to_h2_materials(JSON) ->
 			h0 => ar_util:decode(maps:get(<<"h0">>, JsonElement)),
 			h1 => ar_util:decode(maps:get(<<"h1">>, JsonElement)),
 			recall_bytes_2 => ar_util:decode(maps:get(<<"recall_bytes_2">>, JsonElement))
+		}
+	end, JSON).
+
+json_map_to_solutions(JSON) ->
+	lists:map(fun (JsonElement) ->
+		#{
+			h0 => ar_util:decode(maps:get(<<"h0">>, JsonElement)),
+			h1 => ar_util:decode(maps:get(<<"h1">>, JsonElement)),
+			h2 => ar_util:decode(maps:get(<<"h2">>, JsonElement)),
+			pre_image => ar_util:decode(maps:get(<<"pre_image">>, JsonElement)),
+			chunk_2 => ar_util:decode(maps:get(<<"chunk_2">>, JsonElement))
 		}
 	end, JSON).
 
