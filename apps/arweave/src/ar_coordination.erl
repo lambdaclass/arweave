@@ -2,7 +2,7 @@
 
 -behavior(gen_server).
 
--export([start_link/0, get_state/0]).
+-export([start_link/0, get_state/0, is_peer/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -10,7 +10,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {
-    mining_peers = #{}
+    mining_peers = #{},
+	peers = []
 }).
 
 %%%===================================================================
@@ -20,6 +21,10 @@
 %% @doc Start the gen_server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Return true if is part of the configured mining peers
+is_peer(Peer) ->
+	gen_server:call(?MODULE, {is_peer, Peer}).
 
 %% Helper function to see state while testing
 %% TODO Remove it
@@ -47,6 +52,9 @@ init([]) ->
 %% TODO Remove it
 handle_call(get_peers, _From, State) ->
 	{reply, {ok, State}, State};
+handle_call({is_peer, Peer}, _From, State) ->
+	IsPeer = lists:member(Peer, State#state.peers),
+	{reply, IsPeer, State};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
@@ -67,6 +75,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 
 add_mining_peer({Peer, StorageModules}, State) ->
+	Peers = State#state.peers,
     MiningPeers =
         lists:foldl(
 			fun	({PartitionSize, PartitionId, Packing}, Acc) ->
@@ -81,4 +90,4 @@ add_mining_peer({Peer, StorageModules}, State) ->
 			State#state.mining_peers,
             StorageModules
 		),
-    State#state{mining_peers = MiningPeers}.
+    State#state{mining_peers = MiningPeers, peers = [Peer | Peers]}.
