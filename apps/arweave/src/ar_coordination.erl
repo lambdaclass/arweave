@@ -10,8 +10,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {
-    mining_peers = #{},
-	peers = []
+    peers_by_partition = #{},
+	peer_list = []
 }).
 
 %%%===================================================================
@@ -53,7 +53,7 @@ init([]) ->
 handle_call(get_peers, _From, State) ->
 	{reply, {ok, State}, State};
 handle_call({is_peer, Peer}, _From, State) ->
-	IsPeer = lists:member(Peer, State#state.peers),
+	IsPeer = lists:member(Peer, State#state.peer_list),
 	{reply, IsPeer, State};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -75,7 +75,7 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 
 add_mining_peer({Peer, StorageModules}, State) ->
-	Peers = State#state.peers,
+	Peers = State#state.peer_list,
     MiningPeers =
         lists:foldl(
 			fun	({PartitionSize, PartitionId, Packing}, Acc) ->
@@ -87,7 +87,7 @@ add_mining_peer({Peer, StorageModules}, State) ->
 				        maps:put(PartitionId, [{Peer, PartitionSize, Packing}], Acc)
                 end
 			end,
-			State#state.mining_peers,
+			State#state.peers_by_partition,
             StorageModules
 		),
-    State#state{mining_peers = MiningPeers, peers = [Peer | Peers]}.
+    State#state{peers_by_partition = MiningPeers, peer_list = [Peer | Peers]}.
