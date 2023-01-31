@@ -839,7 +839,7 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 						not_found ->
 							%% PartitionNumber2 is not present locally.
 							%% Check if there is a mining_peer hosting it
-							case ar_coordination:prepare_for(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start) of
+							case ar_coordination:prepare_for(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, Ref) of
 								true ->
 									ok;
 								false ->
@@ -893,7 +893,7 @@ handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, NonceLimite
 					{noreply, State#state{ session = Session2 }};
 				error ->
 					Map2 = maps:put({CorrelationRef, Nonce}, {Chunk, H1}, Map),
-					ar_coordination:computed_h1(CorrelationRef, Nonce, H1),
+					ar_coordination:computed_h1(CorrelationRef, Nonce, H1, Ref),
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
 					{noreply, State#state{ session = Session2 }};
 				{Chunk2, Map2} ->

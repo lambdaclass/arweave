@@ -2,7 +2,7 @@
 
 -behavior(gen_server).
 
--export([start_link/0, computed_h1/3, prepare_for/4, get_state/0]).
+-export([start_link/0, computed_h1/4, prepare_for/5, get_state/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -10,7 +10,8 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {
-	mining_peers = #{}
+	mining_peers = #{},
+	mining_session = undefined
 }).
 
 %%%===================================================================
@@ -28,13 +29,13 @@ get_state() ->
 
 %% @doc An H1 has been generated. Store it to send it later to a
 %% coordinated mining peer
-computed_h1(CorrelationRef, Nonce, H1) ->
-	gen_server:cast(?MODULE, {computed_h1, CorrelationRef, Nonce, H1}).
+computed_h1(CorrelationRef, Nonce, H1, MiningSession) ->
+	gen_server:cast(?MODULE, {computed_h1, CorrelationRef, Nonce, H1, MiningSession}).
 
 %% @doc Chech if there is a peer with PartitionNumber2 and prepare the
 %% coordination to send requests
-prepare_for(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start) ->
-	gen_server:cast(?MODULE, {prepare_for, PartitionNumber2, ReplicaID, Range2End, RecallRange2Start}).
+prepare_for(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession) ->
+	gen_server:cast(?MODULE, {prepare_for, PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -57,15 +58,15 @@ init([]) ->
 %% TODO Remove it
 handle_call(get_peers, _From, State) ->
 	{reply, {ok, State}, State};
-handle_call({prepare_for, PartitionNumber2, _ReplicaID, _Range2End, _RecallRange2Start}, _From, State) ->
+handle_call({prepare_for, PartitionNumber2, _ReplicaID, _Range2End, _RecallRange2Start, MiningSession}, _From, State) ->
 	#state{mining_peers = MiningPeers} = State,
 	Result = maps:is_key(PartitionNumber2, MiningPeers),
-	{reply, Result, State};
+	{reply, Result, State#state{mining_session = MiningSession}};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast({computed_h1, CorrelationRef, Nonce, H1}, State) ->
+handle_cast({computed_h1, CorrelationRef, Nonce, H1, MiningSession}, State) ->
 	%% TODO
 	{noreply, State};
 
