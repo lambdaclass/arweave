@@ -1193,6 +1193,26 @@ handle(<<"POST">>, [<<"vdf">>], Req, Pid) ->
 			handle_post_vdf(Req, Pid)
 	end;
 
+%% TODO: endpoint description
+%% POST request to endpoint /mining/h1
+handle(<<"POST">>, [<<"mining">>, <<"h1">>], Req, Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_mining_h1(Req, Pid)
+	end;
+
+%% TODO: endpoint description
+%% POST request to endpoint /mining/h1
+handle(<<"POST">>, [<<"mining">>, <<"h2">>], Req, Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			handle_mining_h2(Req, Pid)
+	end;
+
 %% Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, Req, _Pid) ->
@@ -2686,4 +2706,49 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
 		?LOG_DEBUG([{event, body_read_timeout}, {method, cowboy_req:method(Req)},
 				{path, cowboy_req:path(Req)}, {peer, ar_util:format_peer(Peer)}]),
 		{error, timeout}
+	end.
+
+handle_mining_h1(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case is_mining_peer(Peer) of
+		false ->
+			{403, #{}, <<>>, Req};
+		true ->
+			case read_complete_body(Req, Pid) of
+				{ok, Body, Req2} ->
+					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+						{ok, JSON} ->
+							H2Materials = ar_serialize:json_map_to_h2_materials(JSON),
+							ar:console("H2 Materials ~p~n", [H2Materials]),
+							{200, #{}, <<>>, Req};
+						{error, _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+					end;
+				{error, body_size_too_large} ->
+					{413, #{}, <<"Payload too large">>, Req}
+			end
+	end.
+
+is_mining_peer(Peer) ->
+	ar_coordination:is_peer(Peer).
+
+handle_mining_h2(Req, Pid) ->
+	Peer = ar_http_util:arweave_peer(Req),
+	case is_mining_peer(Peer) of
+		false ->
+			{403, #{}, <<>>, Req};
+		true ->
+			case read_complete_body(Req, Pid) of
+				{ok, Body, Req2} ->
+					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+						{ok, JSON} ->
+							Solution = ar_serialize:json_map_to_solutions(JSON),
+							ar:console("Possible solution ~p~n", [Solution]),
+							{200, #{}, <<>>, Req};
+						{error, _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+					end;
+				{error, body_size_too_large} ->
+					{413, #{}, <<"Payload too large">>, Req}
+			end
 	end.
