@@ -2,7 +2,9 @@
 
 -behavior(gen_server).
 
--export([start_link/0, computed_h1/4, prepare_for/5, get_state/0, is_peer/1]).
+-export([
+	start_link/0, computed_h1/4, set_partiton/5, reset_mining_session/1, get_state/0, is_peer/1
+]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -10,9 +12,12 @@
 -include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {
-    peers_by_partition = #{},
+	peers_by_partition = #{},
 	peer_list = [],
-	mining_session = undefined
+	mining_session,
+	current_partition,
+	current_peer,
+	hashes_map = #{}
 }).
 
 %%%===================================================================
@@ -39,8 +44,15 @@ computed_h1(CorrelationRef, Nonce, H1, MiningSession) ->
 
 %% @doc Chech if there is a peer with PartitionNumber2 and prepare the
 %% coordination to send requests
-prepare_for(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession) ->
-	gen_server:cast(?MODULE, {prepare_for, PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession}).
+set_partiton(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession) ->
+	gen_server:cast(
+		?MODULE,
+		{set_partiton, PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession}
+	).
+
+%% @doc Mining session has changed. Reset it and discard any intermediate value
+reset_mining_session(Ref) ->
+	gen_server:call(?MODULE, {reset_mining_session, Ref}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -63,10 +75,24 @@ init([]) ->
 %% TODO Remove it
 handle_call(get_peers, _From, State) ->
 	{reply, {ok, State}, State};
-handle_call({prepare_for, PartitionNumber2, _ReplicaID, _Range2End, _RecallRange2Start, MiningSession}, _From, State) ->
-	#state{peers_by_partition = MiningPeers} = State,
-	Result = maps:is_key(PartitionNumber2, MiningPeers),
-	{reply, Result, State#state{mining_session = MiningSession}};
+handle_call(
+	{set_partiton, PartitionNumber2, _ReplicaID, _Range2End, _RecallRange2Start, MiningSession},
+	_From,
+	State
+) ->
+	case State#state.mining_session == MiningSession of
+		false ->
+			{reply, false, State};
+		true ->
+			case maps:find(PartitionNumber2, State#state.peers_by_partition) of
+				{ok, [Peer | _]} ->
+					{reply, true, State#state{
+						current_partition = PartitionNumber2, current_peer = Peer
+					}};
+				_ ->
+					{reply, false, State}
+			end
+	end;
 handle_call({is_peer, Peer}, _From, State) ->
 	IsPeer = lists:member(Peer, State#state.peer_list),
 	{reply, IsPeer, State};
@@ -75,9 +101,18 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({computed_h1, CorrelationRef, Nonce, H1, MiningSession}, State) ->
-	%% TODO
-	{noreply, State};
-
+	case State#state.mining_session == MiningSession of
+		false ->
+			{noreply, State};
+		true ->
+			HashesMap = State#state.hashes_map,
+			NewState = State#state{hashes_map = maps:put({CorrelationRef, Nonce}, H1, HashesMap)},
+			{noreply, NewState}
+	end;
+handle_cast({reset_mining_session, MiningSession}, State) ->
+	{noreply, State#state{
+		mining_session = MiningSession, current_partition = undefined, current_peer = undefined
+	}};
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -95,18 +130,18 @@ terminate(_Reason, _State) ->
 
 add_mining_peer({Peer, StorageModules}, State) ->
 	Peers = State#state.peer_list,
-    MiningPeers =
-        lists:foldl(
-			fun	({PartitionSize, PartitionId, Packing}, Acc) ->
-                %% Allowing the case of same partition handled by different peers
-                case maps:get(PartitionId, Acc, none) of
-                    L when is_list(L) ->
-                        maps:put(PartitionId, [{Peer, PartitionSize, Packing} | L], Acc);
-                    none ->
-				        maps:put(PartitionId, [{Peer, PartitionSize, Packing}], Acc)
-                end
+	MiningPeers =
+		lists:foldl(
+			fun({PartitionSize, PartitionId, Packing}, Acc) ->
+				%% Allowing the case of same partition handled by different peers
+				case maps:get(PartitionId, Acc, none) of
+					L when is_list(L) ->
+						maps:put(PartitionId, [{Peer, PartitionSize, Packing} | L], Acc);
+					none ->
+						maps:put(PartitionId, [{Peer, PartitionSize, Packing}], Acc)
+				end
 			end,
 			State#state.peers_by_partition,
-            StorageModules
+			StorageModules
 		),
-    State#state{peers_by_partition = MiningPeers, peer_list = [Peer | Peers]}.
+	State#state{peers_by_partition = MiningPeers, peer_list = [Peer | Peers]}.
