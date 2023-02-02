@@ -520,12 +520,12 @@
 	%% The updated estimation of the number of Winstons it costs the network to store
 	%% one gibibyte for one minute.
 	scheduled_price_per_gib_minute = 0,
-	%% The recursive hash of the network hash rates and block rewards of the
-	%% latest ?PRICE_HISTORY_BLOCKS blocks.
-	price_history_hash,
-	%% The network hash rates and block rewards from the latest
-	%% ?PRICE_HISTORY_BLOCKS blocks. Used internally, not gossiped.
-	price_history = [],
+	%% The recursive hash of the network hash rates, block rewards, and mining addresses of
+	%% the latest ?REWARD_HISTORY_BLOCKS blocks.
+	reward_history_hash,
+	%% The network hash rates, block rewards, and mining addresses from the latest
+	%% ?REWARD_HISTORY_BLOCKS blocks. Used internally, not gossiped.
+	reward_history = [],
 	%% The total number of Winston emitted when the endowment was not sufficient
 	%% to compensate mining.
 	debt_supply = 0,
@@ -547,8 +547,8 @@
 	redenomination_height = 0,
 	%% The proof of signing the same block several times or extending two equal forks.
 	double_signing_proof,
-	%% The cumulative difficulty of the previous block. Used internally, not gossiped.
-	prev_cumulative_diff
+	%% The cumulative difficulty of the previous block.
+	previous_cumulative_diff = 0
 }).
 
 %% @doc A transaction.
