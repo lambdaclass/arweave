@@ -313,7 +313,10 @@ show_help() ->
 				"Peer to use for coordinated mining",
 				"Example: mining_peer 127.0.0.1:1984,"
 				"17,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI,"
-				"21,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI"}
+				"21,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI"},
+			{"defragment_module",
+				"Run defragmentation of the chunk storage files from the given storage module."
+				" Assumes the run_defragmentation flag is provided."}
 		]
 	),
 	erlang:halt().
@@ -533,6 +536,16 @@ parse_cli_args(["mining_peer", MiningPeerString | Rest], C) ->
 		{error, _} ->
 			io:format("Mining peer ~p is invalid.~n", [MiningPeerString]),
 			erlang:halt()
+	end;
+parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
+	DefragModules = C#config.defragmentation_modules,
+	try
+		DefragModule = ar_config:parse_storage_module(DefragModuleString),
+		DefragModules2 = [DefragModule | DefragModules],
+		parse_cli_args(Rest, C#config{ defragmentation_modules = DefragModules2 })
+	catch _:_ ->
+		io:format("~ndefragment_module value must be in the [number],[address] format.~n~n"),
+		erlang:halt()
 	end;
 parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
