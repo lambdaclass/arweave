@@ -1,9 +1,9 @@
 -module(ar_coordination).
 
--behavior(gen_server).
+-behaviour(gen_server).
 
 -export([
-	start_link/0, computed_h1/4, set_partiton/5, reset_mining_session/1, get_state/0, is_peer/1
+	start_link/0, computed_h1/4, set_partition/5, reset_mining_session/1, get_state/0, is_peer/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -42,12 +42,12 @@ get_state() ->
 computed_h1(CorrelationRef, Nonce, H1, MiningSession) ->
 	gen_server:cast(?MODULE, {computed_h1, CorrelationRef, Nonce, H1, MiningSession}).
 
-%% @doc Chech if there is a peer with PartitionNumber2 and prepare the
+%% @doc Check if there is a peer with PartitionNumber2 and prepare the
 %% coordination to send requests
-set_partiton(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession) ->
+set_partition(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession) ->
 	gen_server:cast(
 		?MODULE,
-		{set_partiton, PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession}
+		{set_partition, PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession}
 	).
 
 %% @doc Mining session has changed. Reset it and discard any intermediate value
@@ -76,7 +76,7 @@ init([]) ->
 handle_call(get_peers, _From, State) ->
 	{reply, {ok, State}, State};
 handle_call(
-	{set_partiton, PartitionNumber2, _ReplicaID, _Range2End, _RecallRange2Start, MiningSession},
+	{set_partition, PartitionNumber2, _ReplicaID, _Range2End, _RecallRange2Start, MiningSession},
 	_From,
 	State
 ) ->
@@ -109,6 +109,9 @@ handle_cast({computed_h1, CorrelationRef, Nonce, H1, MiningSession}, State) ->
 			NewState = State#state{hashes_map = maps:put({CorrelationRef, Nonce}, H1, HashesMap)},
 			{noreply, NewState}
 	end;
+handle_cast({start_remote_request}, #state{hashes_map = HashesMap, current_peer = Peer, current_partition = Partition} = State) ->
+	call_remote_peer(Peer, Partition, maps:to_list(HashesMap)),
+	{noreply, State#state{hashes_map = #{}}};
 handle_cast({reset_mining_session, MiningSession}, State) ->
 	{noreply, State#state{
 		mining_session = MiningSession, current_partition = undefined, current_peer = undefined
@@ -145,3 +148,7 @@ add_mining_peer({Peer, StorageModules}, State) ->
 			StorageModules
 		),
 	State#state{peers_by_partition = MiningPeers, peer_list = [Peer | Peers]}.
+
+call_remote_peer(_Peer, _Partition, _HashesList) ->
+	% TODO
+	ok.
