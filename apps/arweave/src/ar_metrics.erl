@@ -168,9 +168,14 @@ register(MetricsDir) ->
 	%% Consensus.
 	prometheus_gauge:new([
 		{name, arweave_block_height},
-		{help, "Block height"}
+		{help, "The block height."}
 	]),
-	prometheus_gauge:new([{name, block_time}, {help, "Block time"}]),
+	prometheus_gauge:new([{name, block_time},
+			{help, "The time in seconds between two blocks as recorded by the miners."}]),
+	prometheus_gauge:new([
+		{name, block_vdf_time},
+		{help, "The number of the VDF steps between two consequent blocks."}
+	]),
 	prometheus_histogram:new([
 		{name, fork_recovery_depth},
 		{buckets, lists:seq(1, 50)},
@@ -225,6 +230,10 @@ register(MetricsDir) ->
 				20000, 30000]},
 		{labels, []},
 		{help, "The time in milliseconds it took to compute a VDF step."}
+	]),
+	prometheus_gauge:new([
+		{name, vdf_step},
+		{help, "The current VDF step."}
 	]),
 
 	%% Economic metrics.
