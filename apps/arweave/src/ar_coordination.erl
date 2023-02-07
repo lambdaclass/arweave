@@ -45,7 +45,7 @@ computed_h1(CorrelationRef, Nonce, H1, MiningSession) ->
 %% @doc Check if there is a peer with PartitionNumber2 and prepare the
 %% coordination to send requests
 set_partition(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession) ->
-	gen_server:cast(
+	gen_server:call(
 		?MODULE,
 		{set_partition, PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession}
 	).
@@ -73,7 +73,7 @@ init([]) ->
 
 %% Helper callback to see state while testing
 %% TODO Remove it
-handle_call(get_peers, _From, State) ->
+handle_call(get_state, _From, State) ->
 	{reply, {ok, State}, State};
 handle_call(
 	{set_partition, PartitionNumber2, _ReplicaID, _Range2End, _RecallRange2Start, MiningSession},
@@ -96,6 +96,10 @@ handle_call(
 handle_call({is_peer, Peer}, _From, State) ->
 	IsPeer = lists:member(Peer, State#state.peer_list),
 	{reply, IsPeer, State};
+handle_call({reset_mining_session, MiningSession}, _From, State) ->
+	{reply, ok, State#state{
+		mining_session = MiningSession, current_partition = undefined, current_peer = undefined
+	}};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
@@ -112,10 +116,6 @@ handle_cast({computed_h1, CorrelationRef, Nonce, H1, MiningSession}, State) ->
 handle_cast({start_remote_request}, #state{hashes_map = HashesMap, current_peer = Peer, current_partition = Partition} = State) ->
 	call_remote_peer(Peer, Partition, maps:to_list(HashesMap)),
 	{noreply, State#state{hashes_map = #{}}};
-handle_cast({reset_mining_session, MiningSession}, State) ->
-	{noreply, State#state{
-		mining_session = MiningSession, current_partition = undefined, current_peer = undefined
-	}};
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.

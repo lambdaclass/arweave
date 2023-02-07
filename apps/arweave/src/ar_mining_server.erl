@@ -832,8 +832,9 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 			end;
 		false ->
 			#state{ io_threads = Threads } = State,
-			{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+			{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
 					PartitionNumber, PartitionUpperBound),
+			RecallRange1Start = 58277330985206,
 			CorrelationRef = make_ref(),
 			Range1End = RecallRange1Start + ?RECALL_RANGE_SIZE,
 			case find_thread(PartitionNumber, ReplicaID, Range1End, RecallRange1Start,
@@ -853,7 +854,7 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 						not_found ->
 							%% PartitionNumber2 is not present locally.
 							%% Check if there is a mining_peer hosting it
-							case ar_coordination:set_partiton(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, Ref) of
+							case ar_coordination:set_partition(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, Ref) of
 								true ->
 									ok;
 								false ->
