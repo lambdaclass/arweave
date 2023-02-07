@@ -323,6 +323,7 @@ init([]) ->
 			[] ->
 				State;
 			_Peers ->
+				gen_server:cast(?MODULE, check_external_vdf_server_input),
 				State#state{ autocompute = false }
 		end,
 	{ok, start_worker(State2)}.
@@ -402,6 +403,23 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
+handle_cast(check_external_vdf_server_input,
+		#state{ last_external_update = {_, 0} } = State) ->
+	ar_util:cast_after(1000, ?MODULE, check_external_vdf_server_input),
+	{noreply, State};
+handle_cast(check_external_vdf_server_input,
+		#state{ last_external_update = {_, Time} } = State) ->
+	Now = os:system_time(millisecond),
+	case Now - Time > 2000 of
+		true ->
+			?LOG_WARNING([{event, no_message_from_any_vdf_servers},
+					{last_message_seconds_ago, (Now - Time) div 1000}]),
+			ar_util:cast_after(30000, ?MODULE, check_external_vdf_server_input);
+		false ->
+			ar_util:cast_after(1000, ?MODULE, check_external_vdf_server_input)
+	end,
+	{noreply, State};
+
 handle_cast(initialized, State) ->
 	gen_server:cast(?MODULE, schedule_step),
 	ar_events:send(nonce_limiter, initialized),
@@ -421,7 +439,8 @@ handle_cast({apply_tip, B, PrevB}, State) ->
 
 handle_cast({validated_steps, Args}, State) ->
 	{StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound, Steps} = Args,
-	#state{ session_by_key = SessionByKey, sessions = Sessions } = State,
+	#state{ session_by_key = SessionByKey, sessions = Sessions,
+			current_session_key = CurrentSessionKey } = State,
 	case maps:get(SessionKey, SessionByKey, not_found) of
 		not_found ->
 			%% The corresponding fork origin should have just dropped below the
@@ -441,6 +460,8 @@ handle_cast({validated_steps, Args}, State) ->
 						Session
 				end,
 			SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
+			may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey,
+					Session2#vdf_session.step_number),
 			Steps3 = Session2#vdf_session.steps,
 			StepNumber2 = Session2#vdf_session.step_number,
 			Session3 =
@@ -466,6 +487,8 @@ handle_cast({validated_steps, Args}, State) ->
 						Session4
 				end,
 			SessionByKey3 = maps:put(NextSessionKey, Session3, SessionByKey2),
+			may_be_set_vdf_step_metric(NextSessionKey, CurrentSessionKey,
+					Session3#vdf_session.step_number),
 			Sessions2 = gb_sets:add_element(NextSessionKey, Sessions),
 			{noreply, State#state{ session_by_key = SessionByKey3, sessions = Sessions2 }}
 	end;
@@ -554,6 +577,7 @@ handle_info({computed, Args}, State) ->
 			SessionByKey2 = maps:put(CurrentSessionKey, Session2, SessionByKey),
 			ar_events:send(nonce_limiter, {computed_output, {Seed, NextSeed, UpperBound,
 					StepNumber, IntervalNumber, Output, LastStepCheckpoints}}),
+			may_be_set_vdf_step_metric(CurrentSessionKey, CurrentSessionKey, StepNumber),
 			{noreply, State#state{ session_by_key = SessionByKey2 }}
 	end;
 
@@ -710,6 +734,7 @@ apply_tip2(B, PrevB, State) ->
 	SessionKey = {NextSeed, Interval},
 	PrevInterval = PrevStepNumber div ?NONCE_LIMITER_RESET_FREQUENCY,
 	PrevSessionKey = {PrevNextSeed, PrevInterval},
+	ExistingSession = maps:is_key(SessionKey, SessionByKey),
 	Session2 =
 		case maps:get(SessionKey, SessionByKey, not_found) of
 			not_found ->
@@ -730,13 +755,14 @@ apply_tip2(B, PrevB, State) ->
 						last_step_checkpoints_map = #{ StepNumber => LastStepCheckpoints },
 						steps = Steps3, upper_bound = UpperBound,
 						next_upper_bound = NextUpperBound, prev_session_key = PrevSessionKey };
-			_Session ->
-				none
+			Session ->
+				Session
 		end,
-	case Session2 of
-		none ->
+	may_be_set_vdf_step_metric(SessionKey, SessionKey, Session2#vdf_session.step_number),
+	case ExistingSession of
+		true ->
 			State#state{ current_session_key = SessionKey };
-		_ ->
+		false ->
 			SessionByKey2 = maps:put(SessionKey, Session2, SessionByKey),
 			Sessions2 = gb_sets:add_element(SessionKey, Sessions),
 			State#state{ current_session_key = SessionKey, sessions = Sessions2,
@@ -919,7 +945,7 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpp
 	end.
 
 apply_external_update2(Update, State) ->
-	#state{ session_by_key = SessionByKey } = State,
+	#state{ session_by_key = SessionByKey, current_session_key = CurrentSessionKey } = State,
 	#nonce_limiter_update{ session_key = {NextSeed, IntervalNumber} = SessionKey,
 			session = #vdf_session{ seed = Seed, upper_bound = UpperBound,
 					step_number = StepNumber, steps = [Output | _] } = Session,
@@ -932,6 +958,7 @@ apply_external_update2(Update, State) ->
 					{reply, #nonce_limiter_update_response{ session_found = false }, State};
 				false ->
 					SessionByKey2 = maps:put(SessionKey, Session, SessionByKey),
+					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }}
 			end;
 		#vdf_session{ step_number = CurrentStepNumber, steps = CurrentSteps,
@@ -946,6 +973,7 @@ apply_external_update2(Update, State) ->
 					Args = {Seed, NextSeed, UpperBound, StepNumber, IntervalNumber, Output,
 							Checkpoints},
 					ar_events:send(nonce_limiter, {computed_output, Args}),
+					may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber),
 					{reply, ok, State#state{ session_by_key = SessionByKey2 }};
 				false ->
 					case CurrentStepNumber >= StepNumber of
@@ -962,10 +990,20 @@ apply_external_update2(Update, State) ->
 								false ->
 									SessionByKey2 = maps:put(SessionKey, Session,
 											SessionByKey),
+									may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey,
+											StepNumber),
 									{reply, ok, State#state{ session_by_key = SessionByKey2 }}
 							end
 					end
 			end
+	end.
+
+may_be_set_vdf_step_metric(SessionKey, CurrentSessionKey, StepNumber) ->
+	case SessionKey == CurrentSessionKey of
+		true ->
+			prometheus_gauge:set(vdf_step, StepNumber);
+		false ->
+			ok
 	end.
 
 %%%===================================================================
