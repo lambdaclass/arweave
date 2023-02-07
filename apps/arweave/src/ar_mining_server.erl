@@ -119,16 +119,9 @@ handle_cast(pause, #state{ io_threads = IOThreads,
 handle_cast({start_mining, Args}, State) ->
 	{Diff} = Args,
 	ar:console("Starting mining.~n"),
-	#state{ hashing_threads = HashingThreads, io_threads = IOThreads } = State,
-	Ref = make_ref(),
-	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
-	[Thread ! {new_mining_session, Ref} || Thread <- maps:values(IOThreads)],
+	#state{ io_threads = IOThreads } = State,
+	Session = reset_mining_session(State),
 	[Thread ! reset_performance_counters || Thread <- maps:values(IOThreads)],
-	CacheSizeLimit = get_chunk_cache_size_limit(State),
-	log_chunk_cache_size_limit(CacheSizeLimit),
-	ets:insert(?MODULE, {chunk_cache_size, 0}),
-	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
-	Session = #mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit },
 	{noreply, State#state{ diff = Diff, session = Session }};
 
 handle_cast({set_difficulty, _Diff},
@@ -756,7 +749,7 @@ handle_task({computed_output, _},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
-	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
+	#state{ session = Session, io_threads = IOThreads } = State,
 	{Seed, NextSeed, PartitionUpperBound, StepNumber, StartIntervalNumber, Output} = Args,
 	#mining_session{ next_seed = CurrentNextSeed,
 			start_interval_number = CurrentStartIntervalNumber,
@@ -771,17 +764,10 @@ handle_task({computed_output, Args}, State) ->
 						"next entropy nonce: ~s, interval number: ~B.~n",
 						[PartitionUpperBound, ar_util:encode(Seed), ar_util:encode(NextSeed),
 						StartIntervalNumber]),
-				Ref2 = make_ref(),
-				[Thread ! {new_mining_session, Ref2} || Thread <- queue:to_list(Threads)],
-				[Thread ! {new_mining_session, Ref2} || Thread <- maps:values(IOThreads)],
-				CacheSizeLimit = get_chunk_cache_size_limit(State),
-				log_chunk_cache_size_limit(CacheSizeLimit),
-				ets:insert(?MODULE, {chunk_cache_size, 0}),
-				prometheus_gauge:set(mining_server_chunk_cache_size, 0),
-				#mining_session{ ref = Ref2, seed = Seed, next_seed = NextSeed,
+				NewSession = reset_mining_session(State),
+				NewSession#mining_session{ seed = Seed, next_seed = NextSeed,
 						start_interval_number = StartIntervalNumber,
-						partition_upper_bound = PartitionUpperBound,
-						chunk_cache_size_limit = CacheSizeLimit }
+						partition_upper_bound = PartitionUpperBound }
 		end,
 	#mining_session{ step_number_by_output = Map } = Session2,
 	Map2 = maps:put(Output, StepNumber, Map),
@@ -846,8 +832,10 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 			end;
 		false ->
 			#state{ io_threads = Threads } = State,
-			{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+			{_RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
 					PartitionNumber, PartitionUpperBound),
+			% FIXME: Hardcoding start ranges to ensure local and remote matches
+			{RecallRange1Start, RecallRange2Start} = {58277330985206, 63277330985206},
 			CorrelationRef = make_ref(),
 			Range1End = RecallRange1Start + ?RECALL_RANGE_SIZE,
 			case find_thread(PartitionNumber, ReplicaID, Range1End, RecallRange1Start,
@@ -865,7 +853,15 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 					case find_thread(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start,
 							Threads) of
 						not_found ->
-							signal_cache_cleanup(CorrelationRef, Ref, self());
+							%% PartitionNumber2 is not present locally.
+							%% Check if there is a mining_peer hosting it
+							case ar_coordination:set_partition(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, Ref) of
+								true ->
+									ok;
+								false ->
+									%% No mining_peer for PartitionNumber2. Clear the cache
+									signal_cache_cleanup(CorrelationRef, Ref, self())
+							end;
 						Thread2 ->
 							reserve_cache_space(),
 							Thread2 ! {read_recall_range2, {Ref, self(), RecallRange2Start, H0,
@@ -913,6 +909,7 @@ handle_task({mining_thread_computed_h1, {H0, PartitionNumber, Nonce, NonceLimite
 					{noreply, State#state{ session = Session2 }};
 				error ->
 					Map2 = maps:put({CorrelationRef, Nonce}, {Chunk, H1}, Map),
+					ar_coordination:computed_h1(CorrelationRef, Nonce, H1, Ref),
 					Session2 = Session#mining_session{ chunk_cache = Map2 },
 					{noreply, State#state{ session = Session2 }};
 				{Chunk2, Map2} ->
@@ -1106,6 +1103,18 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound) ->
 pick_hashing_thread(Threads) ->
 	{{value, Thread}, Threads2} = queue:out(Threads),
 	{Thread, queue:in(Thread, Threads2)}.
+
+reset_mining_session(State) ->
+	#state{ hashing_threads = HashingThreads, io_threads = IOThreads } = State,
+	Ref = make_ref(),
+	[Thread ! {new_mining_session, Ref} || Thread <- queue:to_list(HashingThreads)],
+	[Thread ! {new_mining_session, Ref} || Thread <- maps:values(IOThreads)],
+	CacheSizeLimit = get_chunk_cache_size_limit(State),
+	log_chunk_cache_size_limit(CacheSizeLimit),
+	ets:insert(?MODULE, {chunk_cache_size, 0}),
+	prometheus_gauge:set(mining_server_chunk_cache_size, 0),
+	ar_coordination:reset_mining_session(Ref),
+	#mining_session{ ref = Ref, chunk_cache_size_limit = CacheSizeLimit }.
 
 optimal_performance(_StoreID, undefined) ->
 	undefined;
