@@ -749,7 +749,7 @@ handle_task({computed_output, _},
 		#state{ session = #mining_session{ ref = undefined } } = State) ->
 	{noreply, State};
 handle_task({computed_output, Args}, State) ->
-	#state{ session = Session, io_threads = IOThreads, hashing_threads = Threads } = State,
+	#state{ session = Session, io_threads = IOThreads } = State,
 	{Seed, NextSeed, PartitionUpperBound, StepNumber, StartIntervalNumber, Output} = Args,
 	#mining_session{ next_seed = CurrentNextSeed,
 			start_interval_number = CurrentStartIntervalNumber,
@@ -832,9 +832,10 @@ handle_task({mining_thread_computed_h0, {H0, PartitionNumber, PartitionUpperBoun
 			end;
 		false ->
 			#state{ io_threads = Threads } = State,
-			{_RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+			{_RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0,
 					PartitionNumber, PartitionUpperBound),
-			RecallRange1Start = 58277330985206,
+			% FIXME: Hardcoding start ranges to ensure local and remote matches
+			{RecallRange1Start, RecallRange2Start} = {58277330985206, 63277330985206},
 			CorrelationRef = make_ref(),
 			Range1End = RecallRange1Start + ?RECALL_RANGE_SIZE,
 			case find_thread(PartitionNumber, ReplicaID, Range1End, RecallRange1Start,

@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, computed_h1/4, set_partition/5, reset_mining_session/1, get_state/0, is_peer/1
+	start_link/0, computed_h1/4, set_partition/5, reset_mining_session/1, get_state/0, is_peer/1, call_remote_peer/0
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -17,8 +17,12 @@
 	mining_session,
 	current_partition,
 	current_peer,
-	hashes_map = #{}
+	hashes_map = #{},
+	timer
 }).
+
+-define(BATCH_SIZE_LIMIT, 400).
+-define(BATCH_TIMEOUT_MS, 20).
 
 %%%===================================================================
 %%% Public interface.
@@ -42,6 +46,9 @@ get_state() ->
 computed_h1(CorrelationRef, Nonce, H1, MiningSession) ->
 	gen_server:cast(?MODULE, {computed_h1, CorrelationRef, Nonce, H1, MiningSession}).
 
+call_remote_peer() ->
+	gen_server:cast(?MODULE, call_remote_peer).
+
 %% @doc Check if there is a peer with PartitionNumber2 and prepare the
 %% coordination to send requests
 set_partition(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningSession) ->
@@ -61,12 +68,13 @@ reset_mining_session(Ref) ->
 init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
+	{ok, TRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, call_remote_peer, []),
 	State =
 		lists:foldl(
 			fun(MiningPeer, Acc) ->
 				add_mining_peer(MiningPeer, Acc)
 			end,
-			#state{},
+			#state{timer = TRef},
 			Config#config.mining_peers
 		),
 	{ok, State}.
@@ -97,6 +105,7 @@ handle_call({is_peer, Peer}, _From, State) ->
 	IsPeer = lists:member(Peer, State#state.peer_list),
 	{reply, IsPeer, State};
 handle_call({reset_mining_session, MiningSession}, _From, State) ->
+	ar:console("New Mining Session ~w.~n", [MiningSession]),
 	{reply, ok, State#state{
 		mining_session = MiningSession, current_partition = undefined, current_peer = undefined
 	}};
@@ -105,17 +114,28 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({computed_h1, CorrelationRef, Nonce, H1, MiningSession}, State) ->
-	case State#state.mining_session == MiningSession of
+	#state{hashes_map = HashesMap, mining_session = StateSession} = State,
+	case StateSession == MiningSession of
 		false ->
 			{noreply, State};
 		true ->
-			HashesMap = State#state.hashes_map,
-			NewState = State#state{hashes_map = maps:put({CorrelationRef, Nonce}, H1, HashesMap)},
-			{noreply, NewState}
+			NewHashesMap = maps:put({CorrelationRef, Nonce}, H1, HashesMap),
+			case maps:size(NewHashesMap) >= ?BATCH_SIZE_LIMIT of
+				true ->
+					call_remote_peer();
+				false ->
+					ok
+			end,
+			{noreply, State#state{hashes_map = NewHashesMap}}
 	end;
-handle_cast({start_remote_request}, #state{hashes_map = HashesMap, current_peer = Peer, current_partition = Partition} = State) ->
+handle_cast(call_remote_peer, #state{hashes_map = HashesMap} = State) when map_size(HashesMap) == 0 ->
+	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, call_remote_peer, []),
+	{noreply, State#state{hashes_map = #{}, timer = NewTRef}};
+handle_cast(call_remote_peer, #state{hashes_map = HashesMap, current_peer = Peer, current_partition = Partition, timer = TRef} = State) ->
+	timer:cancel(TRef),
 	call_remote_peer(Peer, Partition, maps:to_list(HashesMap)),
-	{noreply, State#state{hashes_map = #{}}};
+	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, call_remote_peer, []),
+	{noreply, State#state{hashes_map = #{}, timer = NewTRef}};
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -149,6 +169,7 @@ add_mining_peer({Peer, StorageModules}, State) ->
 		),
 	State#state{peers_by_partition = MiningPeers, peer_list = [Peer | Peers]}.
 
-call_remote_peer(_Peer, _Partition, _HashesList) ->
+call_remote_peer(Peer, Partition, HashesList) ->
 	% TODO
+	ar:console("Sending batch request to ~w for partition ~w of size ~w.~n", [Peer, Partition, length(HashesList)]),
 	ok.
