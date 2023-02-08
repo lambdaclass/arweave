@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, pause/0, start_mining/1, set_difficulty/1,
-		pause_performance_reports/1]).
+		pause_performance_reports/1, remote_compute_h2/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -67,6 +67,10 @@ set_difficulty(Diff) ->
 %% @doc Stop logging performance reports for the given number of milliseconds.
 pause_performance_reports(Time) ->
 	gen_server:cast(?MODULE, {pause_performance_reports, Time}).
+
+%% @doc Compute h2 from a remote request
+remote_compute_h2(Peer, H2Materials) ->
+	gen_server:cast(?MODULE, {remote_compute_h2, Peer, H2Materials}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -250,6 +254,26 @@ handle_cast({pause_performance_reports, Time}, State) ->
 	{noreply, State#state{ pause_performance_reports = true,
 			pause_performance_reports_timeout = Timeout }};
 
+handle_cast({remote_compute_h2, Peer, H2Materials}, State) ->
+	Threads = lists:foldl(fun (#{h0 := H0, h1 := H1, recall_bytes_2 := Recall2Start}, Threads) ->
+			PartitionNumber2 = get_partition_number_by_offset(Recall2Start),
+			Range2End = Recall2Start + ?RECALL_RANGE_SIZE,
+			{ok, #config{mining_addr = ReplicaID}} = application:get_env(arweave, config),
+			case find_thread(PartitionNumber2, ReplicaID, Range2End, Recall2Start, Threads) of
+				not_found ->
+					%% This should not be happening, but you never know
+					Threads;
+				Thread2 ->
+					reserve_cache_space(),
+					CorrelationRef = {remote, Peer, make_ref()},
+					Thread2 ! {remote_read_recall_range2, self(), Recall2Start, H0, H1, CorrelationRef}
+			end
+		end
+		, State#state.io_threads
+		, H2Materials),
+	{noreply, State#state{ io_threads = Threads }};
+
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -367,6 +391,29 @@ handle_info({mining_thread_computed_h2, Args} = Task,
 			{noreply, State#state{ task_queue = Q2 }}
 	end;
 
+%% TODO: This should probably go inside the task_queue, but we don't have a StepNumber so
+%% we can't assing a priority to it
+handle_info({remote_io_thread_recall_range2_chunk,
+			{H0, _, _, _, _, Chunk, CorrelationRef, {remote, H0, H1}}}, State) ->
+	#state{ hashing_threads = Threads } = State,
+	{Thread, Threads2} = pick_hashing_thread(Threads),
+	Thread ! {remote_compute_h2, {self(), H0, H1, Chunk, CorrelationRef}},
+	{noreply, State#state{ hashing_threads = Threads2 }};
+
+%% TODO: This should probably go inside the task_queue, but we don't have a StepNumber so
+%% we can't assing a priority to it
+handle_info({remote_mining_thread_computed_h2, {H0, H1, Chunk, H2, Preimage, CorrelationRef}},
+		#state{ diff = Diff } = State) ->
+	case true of
+		true ->
+			ar_coordination:computed_h2(#{ remote_ref => CorrelationRef
+										 , materials => {H0, H1, Chunk, H2, Preimage}
+										 }),
+			{noreply, State};
+		false ->
+			{noreply, State}
+	end;
+
 handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
@@ -479,6 +526,11 @@ io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef) ->
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{read_recall_range, _} ->
 			%% Clear the message queue from the requests from the outdated mining session.
+			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
+		{remote_read_recall_range2, From, RecallRangeStart, H0, H1, CorrelationRef} ->
+			read_recall_range(remote_io_thread_recall_range2_chunk, H0, PartitionNumber,
+					RecallRangeStart, not_provided, ReplicaID, StoreID, From,
+					{remote, H0, H1}, CorrelationRef),
 			io_thread(PartitionNumber, ReplicaID, StoreID, SessionRef);
 		{read_recall_range2, {SessionRef, From, RecallRangeStart, H0,
 				NonceLimiterOutput, CorrelationRef}} ->
@@ -651,6 +703,10 @@ hashing_thread(SessionRef) ->
 		{compute_h2, _} ->
 			 %% Clear the message queue from the requests from the outdated mining session.
 			 hashing_thread(SessionRef);
+		{remote_compute_h2, {From, H0, H1, Chunk, CorrelationRef}} ->
+			{H2, Preimage} = ar_block:compute_h2(H1, Chunk, H0),
+			From ! {remote_mining_thread_computed_h2, {H0, H1, Chunk, H2, Preimage, CorrelationRef}},
+			hashing_thread(SessionRef);
 		{new_mining_session, Ref} ->
 			hashing_thread(Ref)
 	end.

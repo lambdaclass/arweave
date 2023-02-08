@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, computed_h1/4, set_partition/5, reset_mining_session/1, get_state/0, is_peer/1, call_remote_peer/0
+	start_link/0, computed_h1/4, set_partition/5, reset_mining_session/1, get_state/0, is_peer/1, call_remote_peer/0,
+	compute_h2/2, computed_h2/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -18,7 +19,8 @@
 	current_partition,
 	current_peer,
 	hashes_map = #{},
-	timer
+	timer,
+	solutions_map = #{}
 }).
 
 -define(BATCH_SIZE_LIMIT, 400).
@@ -60,6 +62,13 @@ set_partition(PartitionNumber2, ReplicaID, Range2End, RecallRange2Start, MiningS
 %% @doc Mining session has changed. Reset it and discard any intermediate value
 reset_mining_session(Ref) ->
 	gen_server:call(?MODULE, {reset_mining_session, Ref}).
+
+%% @doc Compute h2 from a remote peer
+compute_h2(Peer, H2Materials) ->
+	gen_server:cast(?MODULE, {compute_h2, Peer, H2Materials}).
+
+computed_h2(Args) ->
+	gen_server:cast(?MODULE, {computed_h2, Args}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -136,6 +145,20 @@ handle_cast(call_remote_peer, #state{hashes_map = HashesMap, current_peer = Peer
 	call_remote_peer(Peer, Partition, maps:to_list(HashesMap)),
 	{ok, NewTRef} = timer:apply_after(?BATCH_TIMEOUT_MS, ?MODULE, call_remote_peer, []),
 	{noreply, State#state{hashes_map = #{}, timer = NewTRef}};
+handle_cast({reset_mining_session, MiningSession}, State) ->
+	{noreply, State#state{
+		mining_session = MiningSession, current_partition = undefined, current_peer = undefined
+	}};
+handle_cast({compute_h2, Peer, H2Materials}, State) ->
+	ar_mining_server:remote_compute_h2(Peer, H2Materials),
+	{noreply, State};
+handle_cast({computed_h2, #{remote_ref := {remote, Peer, _}, materials := H2Args}}, State) ->
+	SolutionsMap = maps:update_with(Peer,
+									fun (V) -> [H2Args | V] end,
+									[H2Args],
+									State#state.solutions_map),
+	State2 = State#state{ solutions_map = SolutionsMap},
+	{noreply, State2};
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.

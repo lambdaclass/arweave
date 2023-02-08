@@ -1432,7 +1432,7 @@ json_map_to_h2_materials(JSON) ->
 		#{
 			h0 => ar_util:decode(maps:get(<<"h0">>, JsonElement)),
 			h1 => ar_util:decode(maps:get(<<"h1">>, JsonElement)),
-			recall_bytes_2 => ar_util:decode(maps:get(<<"recall_bytes_2">>, JsonElement))
+			recall_bytes_2 => maps:get(<<"recall_bytes_2">>, JsonElement)
 		}
 	end, JSON).
 

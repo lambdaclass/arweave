@@ -2719,7 +2719,7 @@ handle_mining_h1(Req, Pid) ->
 					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
 						{ok, JSON} ->
 							H2Materials = ar_serialize:json_map_to_h2_materials(JSON),
-							ar:console("H2 Materials ~p~n", [H2Materials]),
+							ar_coordination:compute_h2(Peer, H2Materials),
 							{200, #{}, <<>>, Req};
 						{error, _} ->
 							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
